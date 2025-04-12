@@ -8,6 +8,8 @@ import numpy as np
 import random
 
 
+from third_part.face3d.models.arcface_torch.backbones.iresnet import iresnet100
+
 from models import load_DNet, load_network
 import torch.nn as nn
 import torch.nn.functional as F
@@ -96,15 +98,59 @@ class LipSyncLoss(nn.Module):
         return loss
 
 class IdentityLoss(nn.Module):
-    """Identity loss using a pre-trained face recognition network (ArcFace)."""
-    def __init__(self, device):
+    """Identity loss using a pre-trained face recognition network (ArcFace - iresnet100)."""
+    def __init__(self, device, checkpoint_path="checkpoints/arcface_iresnet100.pth"): # Placeholder path
         super(IdentityLoss, self).__init__()
+        self.facenet = iresnet100(fp16=False) # Assuming not using fp16 for training loss
+        self.facenet_loaded = False
+        try:
+            self.facenet.load_state_dict(torch.load(checkpoint_path, map_location=torch.device('cpu'))) # Load weights
+            print(f"Loading ArcFace checkpoint from: {checkpoint_path}")
+            self.facenet_loaded = True
+        except FileNotFoundError:
+             print(f"ERROR: ArcFace checkpoint not found at {checkpoint_path}. Identity loss will be disabled.")
+             self.facenet = None # Set to None to indicate failure
+             self.criterion = None
+             self.face_pool = None
+             return # Exit init early
+        except Exception as e:
+             print(f"ERROR: Failed to load ArcFace checkpoint from {checkpoint_path}: {e}. Identity loss will be disabled.")
+             self.facenet = None
+             self.criterion = None
+             self.face_pool = None
+             return
+
+        self.facenet.to(device)
+        self.facenet.eval() # Set to evaluation mode
+        for param in self.facenet.parameters():
+            param.requires_grad = False # Freeze weights
+
         self.criterion = nn.MSELoss() # Paper uses L2 norm (||.||_2) in Eq 12
-        print("Placeholder ArcFace initialized. Replace with actual model.")
+        self.face_pool = torch.nn.AdaptiveAvgPool2d((112, 112)) # ArcFace expects 112x112 input
+
+    def _preprocess(self, img):
+        if not self.facenet_loaded or self.face_pool is None: return None # Check if init failed
+        img = self.face_pool(img) # Resize to 112x112
+        img = (img * 2) - 1 # Normalize to [-1, 1]
+        return img
 
     def forward(self, generated_face, ground_truth_face):
-        loss = torch.tensor(0.0, device=generated_face.device) # Placeholder value
+        if not self.facenet_loaded or self.facenet is None: # Check if init failed
+            return torch.tensor(0.0, device=generated_face.device, requires_grad=False) # Return zero loss if model not loaded
+
+        generated_face_processed = self._preprocess(generated_face)
+        ground_truth_face_processed = self._preprocess(ground_truth_face)
+
+        if generated_face_processed is None or ground_truth_face_processed is None:
+             return torch.tensor(0.0, device=generated_face.device, requires_grad=False)
+
+        emb_gen = self.facenet(generated_face_processed)
+        emb_gt = self.facenet(ground_truth_face_processed)
+
+        loss = self.criterion(emb_gen, emb_gt.detach()) if self.criterion is not None else torch.tensor(0.0, device=emb_gen.device)
         return loss
+
+
 
 class Discriminator(nn.Module):
     def __init__(self):

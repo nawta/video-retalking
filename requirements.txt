@@ -5,8 +5,9 @@ ninja==1.10.2.3
 einops==0.4.1
 facexlib==0.2.5
 librosa==0.9.2
-dlib==19.24.0
+dlib==19.24.6
 gradio>=3.7.0
-numpy==1.23.4
+numpy
 scikit-image==0.24.0
 tqdm>=4.62.3
+git+https://github.com/nizhib/pytorch-insightface
