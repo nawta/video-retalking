@@ -53,7 +53,7 @@ https://user-images.githubusercontent.com/4397546/224310754-665eb2dd-aadc-47dc-b
 ```
 git clone https://github.com/vinthony/video-retalking.git
 cd video-retalking
-conda create -n video_retalking python=3.8
+conda create -n video_retalking python=3.9
 conda activate video_retalking
 
 conda install ffmpeg
