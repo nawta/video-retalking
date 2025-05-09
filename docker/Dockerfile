@@ -8,8 +8,15 @@ RUN apt-get update && apt-get install -y \
     git \
     wget \
     build-essential \
+    cmake \
+    libsndfile1 \
+    python3-dev \
+    unzip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Install numpy first
+RUN pip install --no-cache-dir numpy==1.23.4 gdown
 
 # Copy requirements
 COPY requirements.txt /app/
@@ -21,6 +28,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . /app/
 
+# Download model files
+RUN mkdir -p /app/checkpoints && \
+    cd /app/checkpoints && \
+    gdown https://drive.google.com/uc?id=1YuYo_z5bVuyhpnCVAIjHipHVq-aQZfZj -O models.zip && \
+    unzip models.zip && \
+    rm models.zip
+
 # Create directory for shared data
 RUN mkdir -p /shared_data
 
@@ -28,5 +42,5 @@ RUN mkdir -p /shared_data
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-# Default command
-CMD ["python", "-c", "import time; print('video-retalking container is running'); time.sleep(infinity)"]
+# Default command - use tail -f /dev/null to keep container running
+CMD ["tail", "-f", "/dev/null"]
