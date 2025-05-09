@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y \
     git \
     wget \
     build-essential \
+    gdown \
+    unzip \
+    tar \
     cmake \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -22,6 +25,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . /app/
+
+# Download video-retalking model from Google Drive
+RUN cd /app/models && \
+    gdown https://drive.google.com/uc?id=1YuYo_z5bVuyhpnCVAIjHipHVq-aQZfZj -O video-retalking.zip && \\
+    unzip video-retalking.zip && \
+    rm video-retalking.zip
 
 # Create directory for shared data
 RUN mkdir -p /shared_data
