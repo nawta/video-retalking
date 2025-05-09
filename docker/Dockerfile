@@ -26,10 +26,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . /app/
 
 # Create models directory
-RUN mkdir -p /app/models/video-retalking
+RUN mkdir -p /app
 
 # Download video-retalking model from Google Drive
-RUN cd /app/models/video-retalking && \
+RUN cd /app && \
     gdown https://drive.google.com/uc?id=1YuYo_z5bVuyhpnCVAIjHipHVq-aQZfZj -O video-retalking.zip && \
     unzip video-retalking.zip && \
     rm video-retalking.zip
