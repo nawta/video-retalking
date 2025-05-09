@@ -31,4 +31,4 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Default command
-CMD ["python", "-c", "import time; print('video-retalking container is running'); time.sleep(infinity)"]
+CMD ["python", "-c", "import time; print('video-retalking container is running'); time.sleep(float('inf'))"]
