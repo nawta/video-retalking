@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt /app/
 
 # Install Python dependencies
+RUN pip install --upgrade pip
 RUN pip install --no-cache-dir torch==1.9.0+cpu torchvision==0.10.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
 RUN pip install --no-cache-dir -r requirements.txt
 
