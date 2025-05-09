@@ -28,7 +28,7 @@ COPY . /app/
 
 # Download video-retalking model from Google Drive
 RUN cd /app/models && \
-    gdown https://drive.google.com/uc?id=1YuYo_z5bVuyhpnCVAIjHipHVq-aQZfZj -O video-retalking.zip && \\
+    gdown https://drive.google.com/uc?id=1YuYo_z5bVuyhpnCVAIjHipHVq-aQZfZj -O video-retalking.zip && \
     unzip video-retalking.zip && \
     rm video-retalking.zip
 
