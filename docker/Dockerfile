@@ -30,9 +30,11 @@ RUN mkdir -p /app/models
 
 # Download video-retalking model from Google Drive
 RUN cd /app/models && \
-    gdown https://drive.google.com/uc?id=1YuYo_z5bVuyhpnCVAIjHipHVq-aQZfZj -O video-retalking.zip && \
-    unzip video-retalking.zip && \
-    rm video-retalking.zip
+    gdown https://drive.google.com/uc?id=1YuYo_z5bVuyhpnCVAIjHipHVq-aQZfZj -O VideoReTalking_Pretrained.zip && \
+    unzip VideoReTalking_Pretrained.zip && \
+    rm VideoReTalking_Pretrained.zip && \
+    mv VideoReTalking_Pretrained/* . && \
+    rm -r VideoReTalking_Pretrained
 
 # Create directory for shared data
 RUN mkdir -p /shared_data
