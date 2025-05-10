@@ -127,11 +127,31 @@ def face_detect(images, args, jaw_correction=False, detector=None):
 
     results = []
     pady1, pady2, padx1, padx2 = args.pads if jaw_correction else (0,20,0,0)
-    for rect, image in zip(predictions, images):
-        if rect is None:
-            cv2.imwrite('temp/faulty_frame.jpg', image) # check this frame where the face was not detected.
-            raise ValueError('Face not detected! Ensure the video contains a face in all the frames.')
+    prev_rect = None
+    custom_box_available = args.box is not None and len(args.box) == 4 and (np.array(args.box) >= 0).all()
 
+    for rect, image in zip(predictions, images):
+        # フレームで顔が検出できなかった場合のフォールバック策
+        if rect is None:
+            # ① ユーザが --box で固定矩形を与えていればそれを使用
+            if custom_box_available:
+                t, b, l, r = args.box  # top, bottom, left, right
+                rect = [l, t, r, b]
+            # ② 直前のフレームで検出できていればそれを使う
+            elif prev_rect is not None:
+                rect = prev_rect
+            # ③ それも無い場合は中央部をデフォルトとして切り出す
+            else:
+                h, w = image.shape[:2]
+                side = min(h, w)
+                xc, yc = w // 2, h // 2
+                half = side // 4  # 画面中央をざっくり切り抜く
+                rect = [max(0, xc - half), max(0, yc - half),
+                        min(w, xc + half), min(h, yc + half)]
+
+        # その時点の rect を次フレームのフォールバック用に保存
+        prev_rect = rect
+        
         y1 = max(0, rect[1] - pady1)
         y2 = min(image.shape[0], rect[3] + pady2)
         x1 = max(0, rect[0] - padx1)
