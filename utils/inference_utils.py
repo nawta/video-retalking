@@ -19,10 +19,16 @@ def options():
     parser.add_argument('--LNet_path', type=str, default='checkpoints/LNet.pth')
     parser.add_argument('--ENet_path', type=str, default='checkpoints/ENet.pth') 
     parser.add_argument('--face3d_net_path', type=str, default='checkpoints/face3d_pretrain_epoch_20.pth')                      
-    parser.add_argument('--face', type=str, help='Filepath of video/image that contains faces to use', required=True)
+    parser.add_argument('--face', type=str, help='Filepath of video/image that contains faces to use', required=False)
     parser.add_argument('--audio', type=str, help='Filepath of video/audio file to use as raw audio source', required=True)
     parser.add_argument('--exp_img', type=str, help='Expression template. neutral, smile or image path', default='neutral')
     parser.add_argument('--outfile', type=str, help='Video path to save result')
+
+    parser.add_argument('--frames_mode', action='store_true', help='Enable frame sequence mode instead of video input')
+    parser.add_argument('--frames_dir', type=str, help='Directory containing input frame sequences')
+    parser.add_argument('--frames_pattern', type=str, default='frame_%06d.jpg', help='Pattern for frame filenames')
+    parser.add_argument('--output_frames_dir', type=str, help='Directory to save output frame sequences')
+    parser.add_argument('--face_frames_json', type=str, help='JSON file containing face frame metadata from LASER_ASD')
 
     parser.add_argument('--fps', type=float, help='Can be specified only if input is a static image (default: 25)', default=25., required=False)
     parser.add_argument('--pads', nargs='+', type=int, default=[0, 20, 0, 0], help='Padding (top, bottom, left, right). Please adjust to include chin at least')
@@ -46,6 +52,16 @@ def options():
     parser.add_argument('--re_preprocess', action='store_true')
     
     args = parser.parse_args()
+    
+    if not args.frames_mode and not args.face:
+        parser.error("Either --face or --frames_mode with --frames_dir must be provided")
+    
+    if args.frames_mode and not args.frames_dir:
+        parser.error("--frames_dir must be provided when using --frames_mode")
+    
+    if args.frames_mode and not args.output_frames_dir and not args.outfile:
+        parser.error("Either --output_frames_dir or --outfile must be provided when using --frames_mode")
+    
     return args
 
 exp_aus_dict = {        # AU01_r, AU02_r, AU04_r, AU05_r, AU06_r, AU07_r, AU09_r, AU10_r, AU12_r, AU14_r, AU15_r, AU17_r, AU20_r, AU23_r, AU25_r, AU26_r, AU45_r.

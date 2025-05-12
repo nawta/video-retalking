@@ -1,8 +1,9 @@
 import numpy as np
-import cv2, os, sys, subprocess, platform, torch
+import cv2, os, sys, subprocess, platform, torch, json, glob
 from tqdm import tqdm
 from PIL import Image
 from scipy.io import loadmat
+from pathlib import Path
 
 sys.path.insert(0, 'third_part')
 sys.path.insert(0, 'third_part/GPEN')
@@ -38,15 +39,50 @@ def main():
     restorer = GFPGANer(model_path='checkpoints/GFPGANv1.3.pth', upscale=1, arch='clean', \
                         channel_multiplier=2, bg_upsampler=None)
 
-    base_name = args.face.split('/')[-1]
-    if os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
+    if args.frames_mode:
+        base_name = os.path.basename(args.frames_dir.rstrip('/'))
+    else:
+        base_name = args.face.split('/')[-1]
+    
+    if args.frames_mode:
+        print(f"[Info] Running in frames mode with input directory: {args.frames_dir}")
+        fps = args.fps
+        
+        if args.face_frames_json and os.path.isfile(args.face_frames_json):
+            print(f"[Info] Loading face frames from JSON: {args.face_frames_json}")
+            with open(args.face_frames_json, 'r') as f:
+                face_frames_data = json.load(f)
+                
+            full_frames = []
+            for segment in face_frames_data:
+                if 'face_frames' in segment and len(segment['face_frames']) > 0:
+                    for frame_path in segment['face_frames']:
+                        if os.path.isfile(frame_path):
+                            frame = cv2.imread(frame_path)
+                            if frame is not None:
+                                full_frames.append(frame)
+        else:
+            frame_paths = sorted(glob.glob(os.path.join(args.frames_dir, '*.jpg')) + 
+                                glob.glob(os.path.join(args.frames_dir, '*.png')))
+            
+            if not frame_paths:
+                raise ValueError(f"No frames found in directory: {args.frames_dir}")
+                
+            full_frames = []
+            for frame_path in frame_paths:
+                frame = cv2.imread(frame_path)
+                if frame is not None:
+                    y1, y2, x1, x2 = args.crop
+                    if x2 == -1: x2 = frame.shape[1]
+                    if y2 == -1: y2 = frame.shape[0]
+                    frame = frame[y1:y2, x1:x2]
+                    full_frames.append(frame)
+    
+    elif os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
         args.static = True
-    if not os.path.isfile(args.face):
-        raise ValueError('--face argument must be a valid path to video/image file')
-    elif args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
         full_frames = [cv2.imread(args.face)]
         fps = args.fps
-    else:
+    elif os.path.isfile(args.face):
         video_stream = cv2.VideoCapture(args.face)
         fps = video_stream.get(cv2.CAP_PROP_FPS)
 
@@ -61,6 +97,8 @@ def main():
             if y2 == -1: y2 = frame.shape[0]
             frame = frame[y1:y2, x1:x2]
             full_frames.append(frame)
+    else:
+        raise ValueError('Input must be a valid path to video/image file or a frames directory')
 
     print ("[Step 0] Number of frames available for inference: "+str(len(full_frames)))
     # face detection & cropping, cropping the first frame as the style of FFHQ
@@ -203,7 +241,14 @@ def main():
     gen = datagen(imgs_enhanced.copy(), mel_chunks, full_frames, None, (oy1,oy2,ox1,ox2))
 
     frame_h, frame_w = full_frames[0].shape[:-1]
-    out = cv2.VideoWriter('temp/{}/result.mp4'.format(args.tmp_dir), cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_w, frame_h))
+    
+    if args.frames_mode and args.output_frames_dir:
+        os.makedirs(args.output_frames_dir, exist_ok=True)
+        print(f"[Info] Output frames will be saved to: {args.output_frames_dir}")
+        frame_index = 0
+        output_frames = []
+    else:
+        out = cv2.VideoWriter('temp/{}/result.mp4'.format(args.tmp_dir), cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_w, frame_h))
     
     if args.up_face != 'original':
         instance = GANimationModel()
@@ -265,14 +310,49 @@ def main():
             pp = np.uint8(cv2.resize(np.clip(img, 0 ,255), (width, height)))
 
             pp, orig_faces, enhanced_faces = enhancer.process(pp, xf, bbox=c, face_enhance=False, possion_blending=True)
-            out.write(pp)
-    out.release()
+            
+            if args.frames_mode and args.output_frames_dir:
+                output_frame_path = os.path.join(args.output_frames_dir, f"frame_{frame_index:06d}.jpg")
+                cv2.imwrite(output_frame_path, pp)
+                output_frames.append(output_frame_path)
+                frame_index += 1
+            else:
+                out.write(pp)
     
-    if not os.path.isdir(os.path.dirname(args.outfile)):
-        os.makedirs(os.path.dirname(args.outfile), exist_ok=True)
-    command = 'ffmpeg -loglevel error -y -i {} -i {} -strict -2 -q:v 1 {}'.format(args.audio, 'temp/{}/result.mp4'.format(args.tmp_dir), args.outfile)
-    subprocess.call(command, shell=platform.system() != 'Windows')
-    print('outfile:', args.outfile)
+    if args.frames_mode and args.output_frames_dir:
+        print(f"[Info] Saved {len(output_frames)} output frames to {args.output_frames_dir}")
+        
+        metadata = {
+            "fps": fps,
+            "frame_count": len(output_frames),
+            "frame_paths": output_frames,
+            "audio_path": args.audio
+        }
+        metadata_path = os.path.join(args.output_frames_dir, "metadata.json")
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        print(f"[Info] Saved metadata to {metadata_path}")
+        
+        if args.outfile:
+            if not os.path.isdir(os.path.dirname(args.outfile)):
+                os.makedirs(os.path.dirname(args.outfile), exist_ok=True)
+            
+            temp_video_path = f'temp/{args.tmp_dir}/frames_result.mp4'
+            frame_pattern = os.path.join(args.output_frames_dir, "frame_%06d.jpg")
+            command = f'ffmpeg -loglevel error -y -framerate {fps} -i {frame_pattern} -c:v libx264 -pix_fmt yuv420p {temp_video_path}'
+            subprocess.call(command, shell=platform.system() != 'Windows')
+            
+            command = f'ffmpeg -loglevel error -y -i {temp_video_path} -i {args.audio} -strict -2 -q:v 1 {args.outfile}'
+            subprocess.call(command, shell=platform.system() != 'Windows')
+            print(f'[Info] Created video with audio: {args.outfile}')
+    else:
+        out.release()
+        
+        if not os.path.isdir(os.path.dirname(args.outfile)):
+            os.makedirs(os.path.dirname(args.outfile), exist_ok=True)
+        command = 'ffmpeg -loglevel error -y -i {} -i {} -strict -2 -q:v 1 {}'.format(args.audio, 'temp/{}/result.mp4'.format(args.tmp_dir), args.outfile)
+        subprocess.call(command, shell=platform.system() != 'Windows')
+        print('[Info] Created output video:', args.outfile)
 
 
 # frames:256x256, full_frames: original size
