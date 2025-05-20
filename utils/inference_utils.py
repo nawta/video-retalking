@@ -19,7 +19,8 @@ def options():
     parser.add_argument('--LNet_path', type=str, default='checkpoints/LNet.pth')
     parser.add_argument('--ENet_path', type=str, default='checkpoints/ENet.pth') 
     parser.add_argument('--face3d_net_path', type=str, default='checkpoints/face3d_pretrain_epoch_20.pth')                      
-    parser.add_argument('--face', type=str, help='Filepath of video/image that contains faces to use', required=True)
+    parser.add_argument('--face', type=str, help='Filepath of video/image that contains faces to use (動画/画像)')
+    parser.add_argument('--frames', type=str, help='Directory path that contains pre-extracted frames to use instead of --face')
     parser.add_argument('--audio', type=str, help='Filepath of video/audio file to use as raw audio source', required=True)
     parser.add_argument('--exp_img', type=str, help='Expression template. neutral, smile or image path', default='neutral')
     parser.add_argument('--outfile', type=str, help='Video path to save result')
@@ -46,6 +47,11 @@ def options():
     parser.add_argument('--re_preprocess', action='store_true')
     
     args = parser.parse_args()
+
+    # 入力チェック: --face か --frames の少なくとも一方は必要
+    if (args.face is None or args.face == '') and (args.frames is None or args.frames == ''):
+        parser.error('Either --face or --frames must be provided.')
+
     return args
 
 exp_aus_dict = {        # AU01_r, AU02_r, AU04_r, AU05_r, AU06_r, AU07_r, AU09_r, AU10_r, AU12_r, AU14_r, AU15_r, AU17_r, AU20_r, AU23_r, AU25_r, AU26_r, AU45_r.
