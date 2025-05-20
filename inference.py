@@ -1,5 +1,5 @@
 import numpy as np
-import cv2, os, sys, subprocess, platform, torch
+import cv2, os, sys, subprocess, platform, torch, glob
 from tqdm import tqdm
 from PIL import Image
 from scipy.io import loadmat
@@ -38,29 +38,76 @@ def main():
     restorer = GFPGANer(model_path='checkpoints/GFPGANv1.3.pth', upscale=1, arch='clean', \
                         channel_multiplier=2, bg_upsampler=None)
 
-    base_name = args.face.split('/')[-1]
-    if os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
-        args.static = True
-    if not os.path.isfile(args.face):
-        raise ValueError('--face argument must be a valid path to video/image file')
-    elif args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
-        full_frames = [cv2.imread(args.face)]
-        fps = args.fps
-    else:
-        video_stream = cv2.VideoCapture(args.face)
-        fps = video_stream.get(cv2.CAP_PROP_FPS)
+    # ---------------------- 入力ソースの分岐 ----------------------
+    if args.frames is not None and args.frames != '':
+        if not os.path.isdir(args.frames):
+            raise ValueError('--frames must be a valid directory path')
 
-        full_frames = []
-        while True:
-            still_reading, frame = video_stream.read()
-            if not still_reading:
-                video_stream.release()
-                break
-            y1, y2, x1, x2 = args.crop
-            if x2 == -1: x2 = frame.shape[1]
-            if y2 == -1: y2 = frame.shape[0]
-            frame = frame[y1:y2, x1:x2]
-            full_frames.append(frame)
+        image_extensions = ('*.jpg', '*.png', '*.jpeg')
+        image_files = []
+        for ext in image_extensions:
+            image_files.extend(glob.glob(os.path.join(args.frames, ext)))
+        image_files = sorted(image_files)
+        if len(image_files) == 0:
+            raise ValueError(f'No images found in directory {args.frames}')
+
+        full_frames = [cv2.imread(f) for f in image_files]
+
+        # -------------------- フレームサイズの整合性チェック --------------------
+        # Active Speaker Detection (LASER など) で切り出されたフレームは、
+        # セグメント毎に解像度が異なる場合がある。そのままでは
+        # face_detect() 内で np.array(list_of_images) が失敗するため、
+        # 最大の縦横に合わせて下端・右端を黒でパディングして揃える。
+        if len(full_frames) > 0:
+            heights = [frame.shape[0] for frame in full_frames]
+            widths  = [frame.shape[1] for frame in full_frames]
+            max_h, max_w = max(heights), max(widths)
+
+            if any((h != max_h or w != max_w) for h, w in zip(heights, widths)):
+                padded_frames = []
+                for frame in full_frames:
+                    h, w = frame.shape[:2]
+                    pad_bottom = max_h - h
+                    pad_right  = max_w - w
+                    # 上端・左端はそろっている前提で、下端・右端をゼロ埋め
+                    padded = cv2.copyMakeBorder(frame, 0, pad_bottom, 0, pad_right,
+                                                borderType=cv2.BORDER_CONSTANT, value=[0, 0, 0])
+                    padded_frames.append(padded)
+                full_frames = padded_frames
+
+        fps = args.fps  # directory入力時は --fps で与える値を使用
+        base_name = os.path.basename(os.path.normpath(args.frames))
+        if len(full_frames) == 1:
+            args.static = True
+    else:
+        # 従来の --face 入力処理
+        if args.face is None:
+            raise ValueError('Either --face or --frames must be provided.')
+
+        base_name = os.path.basename(args.face)
+        if os.path.isfile(args.face) and args.face.split('.')[-1].lower() in ['jpg', 'png', 'jpeg']:
+            args.static = True
+
+        if not os.path.isfile(args.face):
+            raise ValueError('--face argument must be a valid path to video/image file')
+        elif args.face.split('.')[-1].lower() in ['jpg', 'png', 'jpeg']:
+            full_frames = [cv2.imread(args.face)]
+            fps = args.fps
+        else:
+            video_stream = cv2.VideoCapture(args.face)
+            fps = video_stream.get(cv2.CAP_PROP_FPS)
+
+            full_frames = []
+            while True:
+                still_reading, frame = video_stream.read()
+                if not still_reading:
+                    video_stream.release()
+                    break
+                y1, y2, x1, x2 = args.crop
+                if x2 == -1: x2 = frame.shape[1]
+                if y2 == -1: y2 = frame.shape[0]
+                frame = frame[y1:y2, x1:x2]
+                full_frames.append(frame)
 
     print ("[Step 0] Number of frames available for inference: "+str(len(full_frames)))
     # face detection & cropping, cropping the first frame as the style of FFHQ
@@ -278,7 +325,11 @@ def main():
 # frames:256x256, full_frames: original size
 def datagen(frames, mels, full_frames, frames_pil, cox):
     img_batch, mel_batch, frame_batch, coords_batch, ref_batch, full_frame_batch = [], [], [], [], [], []
-    base_name = args.face.split('/')[-1]
+    # datagen などで利用するため改めて base_name を決定
+    if args.frames is not None and args.frames != '':
+        base_name = os.path.basename(os.path.normpath(args.frames))
+    else:
+        base_name = os.path.basename(args.face)
     refs = []
     image_size = 256 
 
