@@ -24,6 +24,9 @@ def options():
     parser.add_argument('--audio', type=str, help='Filepath of video/audio file to use as raw audio source', required=True)
     parser.add_argument('--exp_img', type=str, help='Expression template. neutral, smile or image path', default='neutral')
     parser.add_argument('--outfile', type=str, help='Video path to save result')
+    parser.add_argument('--output_frames_dir', type=str, default=None,
+                        help='If specified, generated frames will be saved to this directory instead of creating an MP4. '
+                             'Useful when you want to obtain the cropped, padding-free frames directly.')
 
     parser.add_argument('--fps', type=float, help='Can be specified only if input is a static image (default: 25)', default=25., required=False)
     parser.add_argument('--pads', nargs='+', type=int, default=[0, 20, 0, 0], help='Padding (top, bottom, left, right). Please adjust to include chin at least')
