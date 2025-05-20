@@ -31,6 +31,17 @@ args = options()
 def main():    
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print('[Info] Using {} for inference.'.format(device))
+
+    # --------------------------------------------------
+    # 出力モード判定
+    # --output_frames_dir が指定されている場合は、MP4 を生成せず
+    # 各フレーム(パディング除去済み)を保存するモードに切り替える
+    # --------------------------------------------------
+    save_frames = args.output_frames_dir is not None and args.output_frames_dir != ''
+    if save_frames:
+        os.makedirs(args.output_frames_dir, exist_ok=True)
+        print(f'[Info] Frames will be saved to "{args.output_frames_dir}" instead of generating an MP4.')
+
     os.makedirs(os.path.join('temp', args.tmp_dir), exist_ok=True)
 
     enhancer = FaceEnhancement(base_dir='checkpoints', size=512, model='GPEN-BFR-512', use_sr=False, \
@@ -52,6 +63,8 @@ def main():
             raise ValueError(f'No images found in directory {args.frames}')
 
         full_frames = [cv2.imread(f) for f in image_files]
+        # 各フレームの元サイズを記録 (パディング除去用)
+        orig_dims = [(frame.shape[0], frame.shape[1]) for frame in full_frames]
 
         # -------------------- フレームサイズの整合性チェック --------------------
         # Active Speaker Detection (LASER など) で切り出されたフレームは、
@@ -108,6 +121,10 @@ def main():
                 if y2 == -1: y2 = frame.shape[0]
                 frame = frame[y1:y2, x1:x2]
                 full_frames.append(frame)
+
+    # フレーム入力以外（--face など）の場合、orig_dims が未定義になる可能性があるためここで作成
+    if 'orig_dims' not in locals():
+        orig_dims = [(frm.shape[0], frm.shape[1]) for frm in full_frames]
 
     print ("[Step 0] Number of frames available for inference: "+str(len(full_frames)))
     # face detection & cropping, cropping the first frame as the style of FFHQ
@@ -237,10 +254,22 @@ def main():
         mel_chunks.append(mel[:, start_idx : start_idx + mel_step_size])
         i += 1
 
-    print("[Step 4] Load audio; Length of mel chunks: {}".format(len(mel_chunks)))
+    # --------------------------------------------------------------
+    # 入力フレーム数と mel_chunks 数を合わせる
+    # --------------------------------------------------------------
+    desired_frames = len(full_frames)
+    if len(mel_chunks) < desired_frames:
+        last_chunk = mel_chunks[-1]
+        while len(mel_chunks) < desired_frames:
+            mel_chunks.append(last_chunk)
+    elif len(mel_chunks) > desired_frames:
+        mel_chunks = mel_chunks[:desired_frames]
+
+    print("[Step 4] Load audio; Length of mel chunks after adjust: {} (frames={})".format(len(mel_chunks), desired_frames))
     imgs = imgs[:len(mel_chunks)]
     full_frames = full_frames[:len(mel_chunks)]  
     lm = lm[:len(mel_chunks)]
+    orig_dims = orig_dims[:len(mel_chunks)]
     
     imgs_enhanced = []
     for idx in tqdm(range(len(imgs)), desc='[Step 5] Reference Enhancement'):
@@ -250,14 +279,17 @@ def main():
     gen = datagen(imgs_enhanced.copy(), mel_chunks, full_frames, None, (oy1,oy2,ox1,ox2))
 
     frame_h, frame_w = full_frames[0].shape[:-1]
-    out = cv2.VideoWriter('temp/{}/result.mp4'.format(args.tmp_dir), cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_w, frame_h))
-    
+    if not save_frames:
+        out = cv2.VideoWriter('temp/{}/result.mp4'.format(args.tmp_dir),
+                              cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_w, frame_h))
+
     if args.up_face != 'original':
         instance = GANimationModel()
         instance.initialize()
         instance.setup()
 
     kp_extractor = KeypointExtractor()
+    frame_idx = 0  # 出力フレーム連番
     for i, (img_batch, mel_batch, frames, coords, img_original, f_frames) in enumerate(tqdm(gen, desc='[Step 6] Lip Synthesis:', total=int(np.ceil(float(len(mel_chunks)) / args.LNet_batch_size)))):
         img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
         mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
@@ -312,14 +344,28 @@ def main():
             pp = np.uint8(cv2.resize(np.clip(img, 0 ,255), (width, height)))
 
             pp, orig_faces, enhanced_faces = enhancer.process(pp, xf, bbox=c, face_enhance=False, possion_blending=True)
-            out.write(pp)
-    out.release()
-    
-    if not os.path.isdir(os.path.dirname(args.outfile)):
-        os.makedirs(os.path.dirname(args.outfile), exist_ok=True)
-    command = 'ffmpeg -loglevel error -y -i {} -i {} -strict -2 -q:v 1 {}'.format(args.audio, 'temp/{}/result.mp4'.format(args.tmp_dir), args.outfile)
-    subprocess.call(command, shell=platform.system() != 'Windows')
-    print('outfile:', args.outfile)
+            if not save_frames:
+                out.write(pp)
+            else:
+                # 元のフレームサイズに合わせてパディングを除去
+                h_orig, w_orig = orig_dims[frame_idx]
+                cropped_pp = pp[:h_orig, :w_orig]
+                cv2.imwrite(os.path.join(args.output_frames_dir, f"{frame_idx:06d}.png"), cropped_pp)
+
+            frame_idx += 1
+
+    if not save_frames:
+        out.release()
+
+        # MP4 合成
+        if not os.path.isdir(os.path.dirname(args.outfile)):
+            os.makedirs(os.path.dirname(args.outfile), exist_ok=True)
+        command = 'ffmpeg -loglevel error -y -i {} -i {} -strict -2 -q:v 1 {}'.format(
+            args.audio, 'temp/{}/result.mp4'.format(args.tmp_dir), args.outfile)
+        subprocess.call(command, shell=platform.system() != 'Windows')
+        print('outfile:', args.outfile)
+    else:
+        print(f'[Info] Saved {frame_idx} frames to {args.output_frames_dir}.')
 
 
 # frames:256x256, full_frames: original size
