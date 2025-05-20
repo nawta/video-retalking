@@ -1,9 +1,15 @@
-FROM python:3.8-slim
+FROM nvidia/cuda:11.3.1-cudnn8-devel-ubuntu20.04
 
 WORKDIR /app
 
+ENV DEBIAN_FRONTEND=noninteractive
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
+    python3.8 \
+    python3.8-dev \
+    python3.8-distutils \
+    python3-pip \
     ffmpeg \
     git \
     wget \
@@ -19,48 +25,60 @@ RUN apt-get update && apt-get install -y \
     tar \
     cmake \
     && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* && \
+    ln -s /usr/bin/python3.8 /usr/bin/python
 
-# Copy requirements
-COPY requirements.txt /app/
+# Copy requirements (build context is project root, so specify subdir)
+COPY video-retalking/requirements.txt /app/requirements.txt
 
-# Install Python dependencies
+# # Install Python dependencies
+# RUN pip install --upgrade pip setuptools wheel
+# RUN pip install --no-cache-dir torch==1.9.0+cpu torchvision==0.10.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
+# RUN pip install --no-cache-dir -r requirements.txt
+
 RUN pip install --upgrade pip setuptools wheel
-RUN pip install --no-cache-dir torch==1.9.0+cpu torchvision==0.10.0+cpu -f https://download.pytorch.org/whl/torch_stable.html
+# GPU対応版PyTorchをインストール (CUDA 11.3 対応版)
+RUN pip install --no-cache-dir torch==1.10.0+cu113 torchvision==0.11.1+cu113 -f https://download.pytorch.org/whl/torch_stable.html
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . /app/
+# Copy application code for this component only
+COPY video-retalking/ /app/
 
 # Create models directory
-RUN mkdir -p /app/models
+RUN mkdir -p /app/checkpoints
 
-# Model Download
-# # Option1: Download video-retalking model from Google Drive
+# ------------------------------
+# (NEW) Copy cached models if they exist, otherwise download
+# ------------------------------
+# ビルドコンテキスト直下にある models_cache ディレクトリを一時領域へコピー
+COPY models_cache/ /tmp/models_cache/
+
+RUN set -eux; \
+    # 取得対象ファイル一覧
+    FILES="30_net_gen.pth BFM.zip DNet.pt ENet.pth expression.mat face3d_pretrain_epoch_20.pth \
+           GFPGANv1.3.pth GPEN-BFR-512.pth LNet.pth ParseNet-latest.pth \
+           RetinaFace-R50.pth shape_predictor_68_face_landmarks.dat"; \
+    for f in $FILES; do \
+        if [ -f "/tmp/models_cache/$f" ]; then \
+            echo "[CACHE] copying $f"; \
+            cp "/tmp/models_cache/$f" "/app/checkpoints/$f"; \
+        else \
+            echo "[DOWNLOAD] fetching $f"; \
+            wget -q "https://github.com/vinthony/video-retalking/releases/download/v0.0.1/$f" -O "/app/checkpoints/$f"; \
+        fi; \
+    done && \
+    # BFM.zip 解凍 (まだ展開されていない場合)
+    if [ ! -d /app/checkpoints/BFM ]; then \
+        unzip -q -d /app/checkpoints/BFM /app/checkpoints/BFM.zip; \
+    fi
+
+# # Another Option: Download video-retalking model from Google Drive
 # RUN cd /app/models && \
 #     gdown https://drive.google.com/uc?id=1YuYo_z5bVuyhpnCVAIjHipHVq-aQZfZj -O VideoReTalking_Pretrained.zip && \
 #     unzip VideoReTalking_Pretrained.zip && \
 #     rm VideoReTalking_Pretrained.zip && \
 #     mv VideoReTalking_Pretrained/* . && \
 #     rm -r VideoReTalking_Pretrained
-# TODO: need to link the models to the appropriate location by ln -s .... ...
-
-# # Option2: Download from GitHub Release
-RUN mkdir ./checkpoints  
-RUN wget https://github.com/vinthony/video-retalking/releases/download/v0.0.1/30_net_gen.pth -O ./checkpoints/30_net_gen.pth
-RUN wget https://github.com/vinthony/video-retalking/releases/download/v0.0.1/BFM.zip -O ./checkpoints/BFM.zip
-RUN wget https://github.com/vinthony/video-retalking/releases/download/v0.0.1/DNet.pt -O ./checkpoints/DNet.pt
-RUN wget https://github.com/vinthony/video-retalking/releases/download/v0.0.1/ENet.pth -O ./checkpoints/ENet.pth
-RUN wget https://github.com/vinthony/video-retalking/releases/download/v0.0.1/expression.mat -O ./checkpoints/expression.mat
-RUN wget https://github.com/vinthony/video-retalking/releases/download/v0.0.1/face3d_pretrain_epoch_20.pth -O ./checkpoints/face3d_pretrain_epoch_20.pth
-RUN wget https://github.com/vinthony/video-retalking/releases/download/v0.0.1/GFPGANv1.3.pth -O ./checkpoints/GFPGANv1.3.pth
-RUN wget https://github.com/vinthony/video-retalking/releases/download/v0.0.1/GPEN-BFR-512.pth -O ./checkpoints/GPEN-BFR-512.pth
-RUN wget https://github.com/vinthony/video-retalking/releases/download/v0.0.1/LNet.pth -O ./checkpoints/LNet.pth
-RUN wget https://github.com/vinthony/video-retalking/releases/download/v0.0.1/ParseNet-latest.pth -O ./checkpoints/ParseNet-latest.pth
-RUN wget https://github.com/vinthony/video-retalking/releases/download/v0.0.1/RetinaFace-R50.pth -O ./checkpoints/RetinaFace-R50.pth
-RUN wget https://github.com/vinthony/video-retalking/releases/download/v0.0.1/shape_predictor_68_face_landmarks.dat -O ./checkpoints/shape_predictor_68_face_landmarks.dat
-RUN unzip -d ./checkpoints/BFM ./checkpoints/BFM.zip
-
 
 
 # Create directory for shared data
