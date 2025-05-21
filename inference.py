@@ -383,6 +383,38 @@ def datagen(frames, mels, full_frames, frames_pil, cox):
     kp_extractor = KeypointExtractor()
     fr_pil = [Image.fromarray(frame) for frame in frames]
     lms = kp_extractor.extract_keypoint(fr_pil, 'temp/'+base_name+'x12_landmarks.txt')
+
+    # -----------------------------
+    # ランドマークが検出できなかったフレームを補正
+    # [-1] もしくは NaN を含む場合は、直前の有効ランドマークを使う
+    # それも無い場合は次に見つかる有効ランドマークを利用
+    # -----------------------------
+    last_valid_lm = None
+    # 先に次の有効 lm インデックスをプリコンピュートしておく
+    next_valid_indices = {}
+    next_idx = None
+    for i in reversed(range(len(lms))):
+        if np.mean(lms[i]) != -1 and not np.isnan(lms[i]).any():
+            next_idx = i
+        next_valid_indices[i] = next_idx
+
+    for i, lm in enumerate(lms):
+        if np.mean(lm) == -1 or np.isnan(lm).any():
+            # 直前の有効 lm があれば使用
+            if last_valid_lm is not None:
+                lms[i] = last_valid_lm.copy()
+            else:
+                # 次にある有効 lm を使用
+                nxt = next_valid_indices.get(i)
+                if nxt is not None:
+                    lms[i] = lms[nxt].copy()
+                else:
+                    # 全く見つからない場合は平均値で置き換え (顔中央付近)
+                    h, w = frames[i].shape[:2]
+                    lms[i] = np.array([[w/2, h/2]] * 68)
+        else:
+            last_valid_lm = lms[i].copy()
+
     frames_pil = [ (lm, frame) for frame,lm in zip(fr_pil, lms)] # frames is the croped version of modified face
     crops, orig_images, quads  = crop_faces(image_size, frames_pil, scale=1.0, use_fa=True)
     inverse_transforms = [calc_alignment_coefficients(quad + 0.5, [[0, 0], [0, image_size], [image_size, image_size], [image_size, 0]]) for quad in quads]
